@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merger version="3"><dataSet config="res"><source path="/Users/liukun/developer/workspace/fdd/libs/fdd-android-base-core/app/src/main/res"><file path="/Users/liukun/developer/workspace/fdd/libs/fdd-android-base-core/app/src/main/res/values/colors.xml" qualifiers="" timestamp="1516518138000"><color name="colorPrimary">#3F51B5</color><color name="colorPrimaryDark">#303F9F</color><color name="colorAccent">#FF4081</color></file><file path="/Users/liukun/developer/workspace/fdd/libs/fdd-android-base-core/app/src/main/res/values/styles.xml" qualifiers="" timestamp="1520240307000"><style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style></file><file path="/Users/liukun/developer/workspace/fdd/libs/fdd-android-base-core/app/src/main/res/values/strings.xml" qualifiers="" timestamp="1516518137000"><string name="app_name">BaseCore</string></file></source></dataSet><mergedItems/></merger>
