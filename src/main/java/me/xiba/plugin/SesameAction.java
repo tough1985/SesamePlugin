@@ -1,26 +1,44 @@
 package me.xiba.plugin;
 
+import com.intellij.lang.ASTNode;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.PlatformDataKeys;
+import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.fileChooser.FileChooser;
+import com.intellij.openapi.fileChooser.FileChooserDescriptor;
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
+import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.psi.*;
+import com.intellij.psi.impl.PsiElementFactoryImpl;
+import com.intellij.psi.impl.PsiManagerEx;
+import com.intellij.psi.impl.java.stubs.JavaStubElementTypes;
+import com.intellij.psi.impl.source.DummyHolderFactory;
+import com.intellij.psi.impl.source.SourceTreeToPsiMap;
+import com.intellij.psi.impl.source.tree.*;
+import com.intellij.psi.javadoc.PsiDocComment;
+import com.intellij.psi.util.PsiUtilCore;
 import me.xiba.plugin.template.ModelTemplate;
-import org.apache.commons.collections.keyvalue.DefaultKeyValue;
+import me.xiba.plugin.utils.ClassSelector;
 
 import java.io.File;
-import java.io.FileWriter;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static me.xiba.plugin.template.ViewModelMethodTomplate.*;
 
 public class SesameAction extends AnAction {
 
@@ -30,6 +48,8 @@ public class SesameAction extends AnAction {
 
 
     String name;
+
+    Map<String, Object> sourceMethod;
 
     @Override
     public void actionPerformed(AnActionEvent e) {
@@ -41,18 +61,18 @@ public class SesameAction extends AnAction {
 
         filePath = file.getPath();
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("filePath=" + filePath);
-        sb.append("\n");
-
+//        StringBuilder sb = new StringBuilder();
+//        sb.append("filePath=" + filePath);
+//        sb.append("\n");
+//
         VirtualFile parentDir = file.getParent().getParent();
-        String fileParentPath = parentDir.getPath();
-        sb.append("fileParentPath=" + fileParentPath);
-        sb.append("\n");
-        sb.append("file.getName()=" + file.getName());
-        sb.append("\n");
-        sb.append("threadName=" + Thread.currentThread().getName());
-        sb.append("\n");
+//        String fileParentPath = parentDir.getPath();
+//        sb.append("fileParentPath=" + fileParentPath);
+//        sb.append("\n");
+//        sb.append("file.getName()=" + file.getName());
+//        sb.append("\n");
+//        sb.append("threadName=" + Thread.currentThread().getName());
+//        sb.append("\n");
 
         name = file.getName().replace("Service.java", "");
 
@@ -75,10 +95,10 @@ public class SesameAction extends AnAction {
 
 
             String modelContent;
+
+            sourceMethod = parseMethod(getSourceText(e));
             if(modelFile.exists()) {
-                modelContent = generatorModelMethod(parseMethod(getSourceText(e))) + "\n}";
-
-
+                modelContent = generatorModelMethod(sourceMethod) + "\n}";
 
             } else {
                 // 如果ModelXxx.java文件
@@ -86,31 +106,36 @@ public class SesameAction extends AnAction {
                     modelDir.findOrCreateChildData(file.getUserData(VirtualFile.REQUESTOR_MARKER), modelFileName);
                 }
                 String packagePath = getPackagePath(e);
-                modelContent = generateModelFile(packagePath, name, generatorModelMethod(parseMethod(getSourceText(e))));
+                modelContent = generateModelFile(packagePath, name, generatorModelMethod(sourceMethod));
 
             }
 
+            writeFile(modelFile.getPath(), modelContent);
 
-            RandomAccessFile randomAccessFile = new RandomAccessFile(modelFileFullName, "rw");
-
-            if (randomAccessFile.length() > 2){
-                randomAccessFile.seek(randomAccessFile.length() - 2);
-            }
-
-            randomAccessFile.write(modelContent.getBytes("UTF-8"));
-
-            randomAccessFile.close();
-
-            sb.append("modelFileFullName=" + modelFileFullName);
-
+            getViewModelFile(project, file);
+            // ViewModel相关
+//            VirtualFile viewModelFile = selectSingleVirtualFile(project, file);
+//            // 写内容到ViewModel
+//            String methodName = (String) sourceMethod.get(KEY_METHOD_NAME);
+//            String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
+//            List<DefaultKeyValue> paramList = (List<DefaultKeyValue>) sourceMethod.get(KEY_METHOD_PARAMS);
+//
+//            // 找到ViewModel对应的PsiFile
+//            PsiFile viewModelPsiFile = PsiManager.getInstance(project).findFile(viewModelFile);
 
 
+//            // 向ViewModel中插入相关的方法
+//            generateViewModelMethod(project, viewModelPsiFile, methodName, returnType, generateParamWithType(paramList), generateParam(paramList));
+
+
+
+//            sb.append("modelFileFullName=" + modelFileFullName);
 
         } catch (IOException e1) {
             e1.printStackTrace();
         }
 
-        Messages.showMessageDialog(project, sb.toString(), "Greeting", Messages.getInformationIcon());
+//        Messages.showMessageDialog(project, sb.toString(), "SesamePlugin", Messages.getInformationIcon());
     }
 
 
@@ -259,17 +284,19 @@ public class SesameAction extends AnAction {
 
         String[] methodParams = methodParamStr.split(",");
 
-        List<DefaultKeyValue> paramList = new ArrayList<DefaultKeyValue>();
+        List<Pair> paramList = new ArrayList<Pair>();
         if(methodParams.length > 0){
             for (int i = 0; i < methodParams.length; i++) {
                 String[] paramCons = methodParams[i].trim().split(" ");
 
                 if (paramCons.length > 1){
-                    DefaultKeyValue keyValue = new DefaultKeyValue();
+                    Pair keyValue = new Pair(paramCons[2], paramCons[1]);
+
+//                    DefaultKeyValue keyValue = new DefaultKeyValue();
                     // 参数名做为key，因为参数名不重复
-                    keyValue.setKey(paramCons[2]);
+//                    keyValue.setKey(paramCons[2]);
                     // 参数值做为value
-                    keyValue.setValue(paramCons[1]);
+//                    keyValue.setValue(paramCons[1]);
 
                     paramList.add(keyValue);
                 }
@@ -299,19 +326,20 @@ public class SesameAction extends AnAction {
         sb.append(paramMap.get(KEY_METHOD_NAME));
         sb.append("(");
 
-        List<DefaultKeyValue> paramList = (List<DefaultKeyValue>) paramMap.get(KEY_METHOD_PARAMS);
+
+        List<Pair> paramList = (List<Pair>) paramMap.get(KEY_METHOD_PARAMS);
 
         StringBuilder params = new StringBuilder();
         if (paramList.size() > 0){
-            DefaultKeyValue defaultKeyValue;
+            Pair defaultKeyValue;
             for (int i = 0; i < paramList.size(); i++) {
                 defaultKeyValue = paramList.get(i);
-                sb.append(defaultKeyValue.getValue());
+                sb.append(defaultKeyValue.getSecond());
                 sb.append(" ");
-                sb.append(defaultKeyValue.getKey());
+                sb.append(defaultKeyValue.getFirst());
                 sb.append(", ");
 
-                params.append(defaultKeyValue.getKey());
+                params.append(defaultKeyValue.getFirst());
                 if(i != paramList.size() - 1){
                     params.append(", ");
                 }
@@ -345,6 +373,118 @@ public class SesameAction extends AnAction {
     }
 
     /**
+     * 生成ViewModel相关的方法
+     * @param methodName 方法名
+     * @param returnType 返回值
+     * @param paramsWithType 带类型的参数
+     * @param params 参数
+     * @return
+     */
+    public void generateViewModelMethod(Project project, PsiFile viewModelPsiFile, String methodName, String returnType, String paramsWithType, String params){
+
+//        String firstLetterUpper = methodName.substring(0,1).toUpperCase().concat(methodName.substring(1));
+
+//        String modelFile = String.format(ViewModelMethodTomplate.METHOD_TEMPLATE, methodName, firstLetterUpper, returnType, paramsWithType, params);
+        PsiElement lastChild = viewModelPsiFile.getLastChild();
+
+        PsiElement[] children = viewModelPsiFile.getChildren();
+
+        for (int i = 0; i < children.length; i++) {
+            int index = children.length - 1 - i;
+            if (children[index] instanceof PsiWhiteSpace){
+                continue;
+            }
+            lastChild = children[index];
+            break;
+        }
+
+        PsiElementFactoryImpl mPsiElementFactoryImpl = new PsiElementFactoryImpl(PsiManagerEx.getInstanceEx(project));
+
+        System.out.println("lastChild=" + lastChild.getText());
+
+
+//        //生成第一个注释
+//        String firstCommentText = "// ——————————————————————— ↓↓↓↓ <editor-fold desc=\" method\"> ↓↓↓↓ ——————————————————————— //";
+//        PsiElement firstCommentElement = createTextCommen(project, mPsiElementFactoryImpl, firstCommentText, lastChild, null);
+
+        // 生成observable变量
+        String observableFileText = "private LoadingObserver<%1$s> %2$sObserver;";
+        observableFileText = String.format(observableFileText, returnType, methodName);
+        PsiElement observableFiledElement = createField(project, mPsiElementFactoryImpl, observableFileText, lastChild, null);
+
+
+        // 生成initObservable的方法
+        String firstLetterUpper = methodName.substring(0,1).toUpperCase().concat(methodName.substring(1));
+        String initObservableMethodText = String.format(INIT_OBSERVER_METHOD_TEMPLATE, methodName, firstLetterUpper, returnType);
+        PsiElement initObservableMethodElement = createMethod(project, mPsiElementFactoryImpl, initObservableMethodText, lastChild, observableFiledElement);
+
+        // 生成SuccessEvent变量
+        String successEventFiledText = String.format(SUCCESS_EVENT_FIELD_TEMPLATE, methodName, returnType);
+        PsiElement successEventFiledElement = createField(project, mPsiElementFactoryImpl, successEventFiledText, lastChild, initObservableMethodElement);
+
+        // 生成getSuccessEvent方法模板
+        String getSuccessEventMethodText = String.format(GET_SUCCESS_EVENT_METHOD_TEMPLATE, methodName, firstLetterUpper, returnType);
+        PsiElement getSuccessEventMethodElement = createMethod(project, mPsiElementFactoryImpl, getSuccessEventMethodText, lastChild, successEventFiledElement);
+
+        // 生成调用model方法模板
+        String modelMethodText = String.format(MODEL_METHOD_TEMPLATE, methodName, paramsWithType, params);
+        PsiElement modelMethodElement = createMethod(project, mPsiElementFactoryImpl, modelMethodText, lastChild, getSuccessEventMethodElement);
+
+
+
+        // 生成结束注释
+//        PsiElement endEditorFoldCommentElement = createComment(project, mPsiElementFactoryImpl, END_EDITOR_FOLD_COMMENT_TEMPLATE, lastChild, modelMethodElement);
+//        return modelFile;
+    }
+
+    /**
+     * 生成带参数类型的 参数字符串
+     * @param paramList
+     * @return
+     */
+    private String generateParamWithType(List<Pair> paramList){
+        StringBuilder sb = new StringBuilder();
+
+
+        if (paramList.size() > 0){
+            Pair defaultKeyValue;
+            for (int i = 0; i < paramList.size(); i++) {
+                defaultKeyValue = paramList.get(i);
+                sb.append(defaultKeyValue.getSecond());
+                sb.append(" ");
+                sb.append(defaultKeyValue.getFirst());
+
+                if(i != paramList.size() - 1){
+                    sb.append(", ");
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 生成参数字符串
+     * @param paramList
+     * @return
+     */
+    private String generateParam(List<Pair> paramList){
+        StringBuilder params = new StringBuilder();
+
+
+        if (paramList.size() > 0){
+            Pair defaultKeyValue;
+            for (int i = 0; i < paramList.size(); i++) {
+                defaultKeyValue = paramList.get(i);
+                params.append(defaultKeyValue.getFirst());
+                if(i != paramList.size() - 1){
+                    params.append(", ");
+                }
+            }
+        }
+        return params.toString();
+    }
+
+    /**
      * 获取service文件的包路径
      * @param e
      * @return
@@ -361,4 +501,255 @@ public class SesameAction extends AnAction {
         return firstLineText.substring(startIndex + startText.length(), endIndex);
     }
 
+    private void writeFile(String file, String content) throws IOException {
+
+        RandomAccessFile randomAccessFile = null;
+        try {
+            randomAccessFile = new RandomAccessFile(file, "rw");
+            if (randomAccessFile.length() > 2){
+                randomAccessFile.seek(randomAccessFile.length() - 2);
+            }
+            randomAccessFile.write(content.getBytes("UTF-8"));
+
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } finally {
+            randomAccessFile.close();
+        }
+
+    }
+
+    /**
+     * 单选文件
+     *
+     * @param project
+     * @param virtualFile
+     */
+    private VirtualFile selectSingleVirtualFile(Project project, VirtualFile virtualFile) {
+        FileChooserDescriptor fileChooserDescriptor = FileChooserDescriptorFactory.createSingleFileDescriptor(); // Single
+        fileChooserDescriptor.setForcedToUseIdeaFileChooser(true);
+        // 选择的文件
+        VirtualFile selectedFile = FileChooser.chooseFile(fileChooserDescriptor, project, virtualFile); // Single
+
+        return selectedFile;
+//        Messages.showMessageDialog(project, selectedFile.getPath(), "Greeting", Messages.getInformationIcon());
+    }
+
+    /**
+     * 多选文件
+     *
+     * @param project
+     * @param virtualFile
+     */
+    private void selectMultiVirtualFiles(Project project, VirtualFile virtualFile) {
+        FileChooserDescriptor multipleFilesNoJarsDescriptor = FileChooserDescriptorFactory.createMultipleFilesNoJarsDescriptor(); // Multi
+        multipleFilesNoJarsDescriptor.setForcedToUseIdeaFileChooser(true);
+        VirtualFile[] selectedFiles = FileChooser.chooseFiles(multipleFilesNoJarsDescriptor, project, virtualFile); // Multi
+        Messages.showMessageDialog(project, selectedFiles.length + "", "Greeting", Messages.getInformationIcon());
+    }
+
+    /**
+     * 创建一个变量
+     * @param project
+     * @param psiElementFactoryImpl
+     * @param text
+     * @param context
+     * @return
+     */
+    public PsiElement createField(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
+        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
+            @Override
+            public PsiElement compute() {
+                PsiField psiField = psiElementFactoryImpl.createFieldFromText(text, context);
+                if (anchor != null){
+                    return context.addAfter(psiField, anchor);
+                } else {
+                    return context.add(psiField);
+                }
+            }
+        });
+    }
+
+    /**
+     * 创建一个方法
+     * @param project
+     * @param psiElementFactoryImpl
+     * @param text
+     * @param context
+     * @return
+     */
+    public PsiElement createMethod(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
+        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
+            @Override
+            public PsiElement compute() {
+                PsiMethod psiMethod = psiElementFactoryImpl.createMethodFromText(text, context);
+                if (anchor != null){
+                    return context.addAfter(psiMethod, anchor);
+                } else {
+                    return context.add(psiMethod);
+                }
+            }
+        });
+    }
+
+    /**
+     * 创建一个注释
+     * @param project
+     * @param psiElementFactoryImpl
+     * @param text
+     * @param context
+     * @return
+     */
+    public PsiElement createComment(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
+
+
+        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
+            @Override
+            public PsiElement compute() {
+                PsiComment comment = psiElementFactoryImpl.createCommentFromText(text, context);
+
+//                PsiExpression psiExpression = psiElementFactoryImpl.createExpressionFromText("a=b", context);
+                if (anchor != null){
+                    return context.addAfter(comment, anchor);
+                } else {
+                    return context.add(comment);
+                }
+            }
+        });
+    }
+
+    public PsiElement createTextCommen(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
+        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
+            @Override
+            public PsiElement compute() {
+                PlainTextASTFactory factory = new PlainTextASTFactory();
+                LeafElement leafElement = factory.createLeaf(PlainTextTokenTypes.PLAIN_TEXT, text + "\n");
+                ASTNode node = context.getNode();
+
+                ASTNode[] children = node.getChildren(null);
+
+
+
+                node.addChild(leafElement, children[children.length - 2]);
+
+//                PsiPlainTextImpl psiComment = new PsiPlainTextImpl(text);
+//                DummyHolderFactory.createHolder(PsiManagerEx.getInstanceEx(project), (TreeElement) SourceTreeToPsiMap.psiElementToTree(psiComment), context);
+//                PsiElement comment = psiElementFactoryImpl.createCommentFromText(text, null);
+
+
+//                if (anchor != null){
+//                    return context.addBefore(psiComment, anchor);
+//                } else {
+//                    return context.add(psiComment);
+//                }
+                return null;
+            }
+        });
+    }
+//    createDocTagFromText
+
+    /**
+     * 创建一个注释
+     * @param project
+     * @param psiElementFactoryImpl
+     * @param text
+     * @param context
+     * @return
+     */
+    public PsiElement createComment(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context){
+        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
+            @Override
+            public PsiElement compute() {
+                PsiComment comment = psiElementFactoryImpl.createCommentFromText(text, context);
+                return context.add(comment);
+            }
+        });
+    }
+
+    /**
+     * 删除一个元素
+     * @param project
+     * @param context
+     * @return
+     */
+    public PsiElement deletePsiElement(Project project, PsiElement context){
+
+
+        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
+            @Override
+            public PsiElement compute() {
+                context.delete();
+                return null;
+            }
+        });
+    }
+
+    /**
+     * 添加一个元素
+     * @param project
+     * @param context
+     * @return
+     */
+    public PsiElement addPsiElement(Project project, PsiElement context, PsiElement element){
+
+
+        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
+            @Override
+            public PsiElement compute() {
+                return context.add(element);
+            }
+        });
+    }
+
+
+    /**
+     * 获取ViewModel文件夹下的所有文件
+     *
+     * @param virtualFile
+     */
+    private void getViewModelFile(Project project, VirtualFile virtualFile) {
+        VirtualFile parentDir = virtualFile.getParent().getParent();
+        VirtualFile vmDir = parentDir.findChild("viewmodel");
+        VirtualFile[] vmFiles;
+        if (vmDir != null && vmDir.exists()) {
+            vmFiles = vmDir.getChildren();
+            if (vmFiles.length > 0) {
+                showSelectPanel(project, vmFiles);
+            }
+        }
+    }
+
+    /**
+     * 显示VM选择面板
+     */
+    private void showSelectPanel(Project project, VirtualFile[] vmFiles) {
+        ClassSelector classSelector = new ClassSelector(vmFiles);
+        classSelector.setOnFileSelectListener(new ClassSelector.OnFileSelectListener() {
+            @Override
+            public void onFileSelected(List<VirtualFile> list) {
+                onViewModelFileSelected(project, list);
+            }
+        });
+        classSelector.setVisible(true);
+    }
+
+    /**
+     * VM选择完成执行
+     *
+     * @param resultFileList
+     */
+    private void onViewModelFileSelected(Project project, List<VirtualFile> resultFileList) {
+
+        String methodName = (String) sourceMethod.get(KEY_METHOD_NAME);
+        String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
+        List<Pair> paramList = (List<Pair>) sourceMethod.get(KEY_METHOD_PARAMS);
+
+        for (VirtualFile viewModelFile : resultFileList) {
+            // 找到ViewModel对应的PsiFile
+            PsiFile viewModelPsiFile = PsiManager.getInstance(project).findFile(viewModelFile);
+            // 向ViewModel中插入相关的方法
+            generateViewModelMethod(project, viewModelPsiFile, methodName, returnType, generateParamWithType(paramList), generateParam(paramList));
+        }
+
+    }
 }

@@ -21,7 +21,7 @@ public class ModelTemplate {
                     " */\n" +
                     "public class %2$sModel extends BaseHttpModel {\n" +
                     "\n" +
-                    "    public %2$sService get%2$sService() {\n" +
+                    "    public %2$sService getService() {\n" +
                     "    }\n" +
                     "\n" +
                     "%3$s" +

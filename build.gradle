@@ -1,7 +1,9 @@
 plugins {
     id 'java'
-    id 'org.jetbrains.intellij' version '0.3.5'
+    id 'org.jetbrains.intellij' version '0.3.4'
 }
+apply plugin: 'org.jetbrains.intellij'
+apply plugin: 'java'
 
 group 'me.xiba.plugin'
 version '1.0-SNAPSHOT'
@@ -17,7 +19,9 @@ dependencies {
 }
 
 intellij {
-    version '2018.2'
+    version '2017.3.5'
+    pluginName 'SesamePlugin'
+    intellij.updateSinceUntilBuild false
 }
 patchPluginXml {
     changeNotes """

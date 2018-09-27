@@ -1,12 +1,10 @@
 <idea-plugin>
     <id>me.xiba.plugin.SesamePlugin</id>
-    <name>Plugin display name here</name>
-    <vendor email="support@yourcompany.com" url="http://www.yourcompany.com">YourCompany</vendor>
+    <name>SesamePlugin</name>
+    <version>0.1.0</version>
+    <vendor email="tough1985@gmail.com" url="https://github.com/tough1985/SesamePlugin">Xiba</vendor>
 
-    <description><![CDATA[
-    Enter short description for your plugin here.<br>
-    <em>most HTML tags may be used</em>
-    ]]></description>
+    <description>一个生成Retorfit相关代码的插件</description>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
          on how to target different products -->
@@ -17,11 +15,22 @@
     <extensions defaultExtensionNs="com.intellij">
         <!-- Add your extensions here -->
     </extensions>
+    <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
+    <idea-version since-build="123.72"/>
+    <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
+         on how to target different products -->
+    <depends>com.intellij.modules.lang</depends>
+
 
     <actions>
         <action id="MethodGener.SampleMenu" class="me.xiba.plugin.SesameAction"
                 text="SesameGenerate" description="Generate Retrofit Service method in Model class And ViewModel class">
             <add-to-group group-id="GenerateGroup" anchor="last"/>
         </action>
+        <!--<action id="MethodGener.TestPsi" class="me.xiba.plugin.TestPsiAction"-->
+                <!--text="TestPsi" description="TestPsi">-->
+            <!--<add-to-group group-id="GenerateGroup" anchor="last"/>-->
+        <!--</action>-->
     </actions>
+
 </idea-plugin>
