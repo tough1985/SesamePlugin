@@ -20,12 +20,10 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.PsiElementFactoryImpl;
 import com.intellij.psi.impl.PsiManagerEx;
-import com.intellij.psi.impl.java.stubs.JavaStubElementTypes;
-import com.intellij.psi.impl.source.DummyHolderFactory;
-import com.intellij.psi.impl.source.SourceTreeToPsiMap;
-import com.intellij.psi.impl.source.tree.*;
+import com.intellij.psi.impl.source.tree.LeafElement;
+import com.intellij.psi.impl.source.tree.PlainTextASTFactory;
+import com.intellij.psi.impl.source.tree.PsiWhiteSpaceImpl;
 import com.intellij.psi.javadoc.PsiDocComment;
-import com.intellij.psi.util.PsiUtilCore;
 import me.xiba.plugin.template.ModelTemplate;
 import me.xiba.plugin.utils.ClassSelector;
 
@@ -45,7 +43,10 @@ public class SesameAction extends AnAction {
     public static final String KEY_METHOD_NAME = "method_name";
     public static final String KEY_METHOD_RETURN = "method_return";
     public static final String KEY_METHOD_PARAMS = "method_params";
+    public static final String KEY_METHOD_COMMENT_DATA = "method_comment_data";
 
+    public static final String KEY_METHOD_PARAMS_WITH_TYPE = "method_params_with_type";
+    public static final String KEY_METHOD_PARAMS_WITHOUT_TYPE = "method_params_without_type";
 
     String name;
 
@@ -54,28 +55,29 @@ public class SesameAction extends AnAction {
     @Override
     public void actionPerformed(AnActionEvent e) {
         Project project = e.getProject();
-
+        // 获取当前的文件
         VirtualFile file = e.getData(PlatformDataKeys.VIRTUAL_FILE);
 
-        String filePath = "";
-
-        filePath = file.getPath();
-
-//        StringBuilder sb = new StringBuilder();
-//        sb.append("filePath=" + filePath);
-//        sb.append("\n");
-//
+        // 获取当前文件的目录
         VirtualFile parentDir = file.getParent().getParent();
-//        String fileParentPath = parentDir.getPath();
-//        sb.append("fileParentPath=" + fileParentPath);
-//        sb.append("\n");
-//        sb.append("file.getName()=" + file.getName());
-//        sb.append("\n");
-//        sb.append("threadName=" + Thread.currentThread().getName());
-//        sb.append("\n");
 
         name = file.getName().replace("Service.java", "");
 
+        // 生成Model文件内容
+        generateModelFile(file, parentDir, e);
+
+        getViewModelFile(project, file);
+
+
+    }
+
+    /**
+     * 生成Model文件内容
+     * @param file
+     * @param parentDir
+     * @param e
+     */
+    public void generateModelFile(VirtualFile file, VirtualFile parentDir, AnActionEvent e){
         try {
             //创建「model」文件夹
             VirtualFile modelDir = parentDir.findChild("model");
@@ -86,25 +88,25 @@ public class SesameAction extends AnAction {
             //获取「model」文件名称
             String modelFileName = file.getName().replace("Service", "Model");
 
-
-
-
+            // 创建「model」文件
             String modelFileFullName = modelDir.getPath() + "/" + modelFileName;
             File modelFile = new File(modelFileFullName);
 
-
-
             String modelContent;
 
+            // 解析接口方法
             sourceMethod = parseMethod(getSourceText(e));
             if(modelFile.exists()) {
+                // 如果文件存在 向文件添加方法
                 modelContent = generatorModelMethod(sourceMethod) + "\n}";
 
             } else {
                 // 如果ModelXxx.java文件
                 if(modelDir != null && modelDir.exists()) {
+                    // 如果路径不存在，先创建路径
                     modelDir.findOrCreateChildData(file.getUserData(VirtualFile.REQUESTOR_MARKER), modelFileName);
                 }
+                // 创建Model文件并生成内容
                 String packagePath = getPackagePath(e);
                 modelContent = generateModelFile(packagePath, name, generatorModelMethod(sourceMethod));
 
@@ -112,30 +114,12 @@ public class SesameAction extends AnAction {
 
             writeFile(modelFile.getPath(), modelContent);
 
-            getViewModelFile(project, file);
-            // ViewModel相关
-//            VirtualFile viewModelFile = selectSingleVirtualFile(project, file);
-//            // 写内容到ViewModel
-//            String methodName = (String) sourceMethod.get(KEY_METHOD_NAME);
-//            String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
-//            List<DefaultKeyValue> paramList = (List<DefaultKeyValue>) sourceMethod.get(KEY_METHOD_PARAMS);
-//
-//            // 找到ViewModel对应的PsiFile
-//            PsiFile viewModelPsiFile = PsiManager.getInstance(project).findFile(viewModelFile);
 
 
-//            // 向ViewModel中插入相关的方法
-//            generateViewModelMethod(project, viewModelPsiFile, methodName, returnType, generateParamWithType(paramList), generateParam(paramList));
-
-
-
-//            sb.append("modelFileFullName=" + modelFileFullName);
 
         } catch (IOException e1) {
             e1.printStackTrace();
         }
-
-//        Messages.showMessageDialog(project, sb.toString(), "SesamePlugin", Messages.getInformationIcon());
     }
 
 
@@ -359,20 +343,6 @@ public class SesameAction extends AnAction {
     }
 
     /**
-     * 生成model文件内容
-     * @param packagePath
-     * @param name
-     * @param method
-     */
-    public String generateModelFile(String packagePath, String name, String method){
-
-        String modelFile = String.format(ModelTemplate.MODEL_TEMPLATE, packagePath, name, method);
-
-        return modelFile;
-
-    }
-
-    /**
      * 生成ViewModel相关的方法
      * @param methodName 方法名
      * @param returnType 返回值
@@ -400,17 +370,19 @@ public class SesameAction extends AnAction {
 
         PsiElementFactoryImpl mPsiElementFactoryImpl = new PsiElementFactoryImpl(PsiManagerEx.getInstanceEx(project));
 
-        System.out.println("lastChild=" + lastChild.getText());
 
 
-//        //生成第一个注释
-//        String firstCommentText = "// ——————————————————————— ↓↓↓↓ <editor-fold desc=\" method\"> ↓↓↓↓ ——————————————————————— //";
-//        PsiElement firstCommentElement = createTextCommen(project, mPsiElementFactoryImpl, firstCommentText, lastChild, null);
+        //生成第一个注释
+        String firstCommentText = "// ——————————————————————— ↓↓↓↓ <editor-fold desc=\" method\"> ↓↓↓↓ ——————————————————————— //";
+        PsiElement firstCommentElement = createComment(project, mPsiElementFactoryImpl, firstCommentText, lastChild, null);
 
         // 生成observable变量
         String observableFileText = "private LoadingObserver<%1$s> %2$sObserver;";
         observableFileText = String.format(observableFileText, returnType, methodName);
-        PsiElement observableFiledElement = createField(project, mPsiElementFactoryImpl, observableFileText, lastChild, null);
+        PsiElement observableFiledElement = createField(project, mPsiElementFactoryImpl, observableFileText, lastChild, firstCommentElement);
+
+
+//        PsiElement whiteSpace = createWhiteSpace(project, mPsiElementFactoryImpl, "", lastChild, observableFiledElement);
 
 
         // 生成initObservable的方法
@@ -435,6 +407,20 @@ public class SesameAction extends AnAction {
         // 生成结束注释
 //        PsiElement endEditorFoldCommentElement = createComment(project, mPsiElementFactoryImpl, END_EDITOR_FOLD_COMMENT_TEMPLATE, lastChild, modelMethodElement);
 //        return modelFile;
+    }
+
+    /**
+     * 生成model文件内容
+     * @param packagePath
+     * @param name
+     * @param method
+     */
+    public String generateModelFile(String packagePath, String name, String method){
+
+        String modelFile = String.format(ModelTemplate.MODEL_TEMPLATE, packagePath, name, method);
+
+        return modelFile;
+
     }
 
     /**
@@ -561,11 +547,13 @@ public class SesameAction extends AnAction {
             @Override
             public PsiElement compute() {
                 PsiField psiField = psiElementFactoryImpl.createFieldFromText(text, context);
+
                 if (anchor != null){
                     return context.addAfter(psiField, anchor);
                 } else {
                     return context.add(psiField);
                 }
+
             }
         });
     }
@@ -606,13 +594,30 @@ public class SesameAction extends AnAction {
         return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
             @Override
             public PsiElement compute() {
-                PsiComment comment = psiElementFactoryImpl.createCommentFromText(text, context);
+//                PsiComment comment = psiElementFactoryImpl.createCommentFromText(text, context);
+                PsiDocComment comment = psiElementFactoryImpl.createDocCommentFromText("/**\n" +
+                        " *\n" +
+                        " */");
 
-//                PsiExpression psiExpression = psiElementFactoryImpl.createExpressionFromText("a=b", context);
                 if (anchor != null){
                     return context.addAfter(comment, anchor);
                 } else {
                     return context.add(comment);
+                }
+            }
+        });
+    }
+
+    public PsiElement createWhiteSpace(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
+        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
+            @Override
+            public PsiElement compute() {
+                PsiWhiteSpaceImpl psiWhiteSpace = new PsiWhiteSpaceImpl("/n");
+
+                if (anchor != null){
+                    return context.addAfter(psiWhiteSpace, anchor);
+                } else {
+                    return context.add(psiWhiteSpace);
                 }
             }
         });
@@ -752,4 +757,15 @@ public class SesameAction extends AnAction {
         }
 
     }
+
+
+
+
+
+
+
 }
+
+
+
+

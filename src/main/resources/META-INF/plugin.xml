@@ -27,10 +27,10 @@
                 text="SesameGenerate" description="Generate Retrofit Service method in Model class And ViewModel class">
             <add-to-group group-id="GenerateGroup" anchor="last"/>
         </action>
-        <!--<action id="MethodGener.TestPsi" class="me.xiba.plugin.TestPsiAction"-->
-                <!--text="TestPsi" description="TestPsi">-->
-            <!--<add-to-group group-id="GenerateGroup" anchor="last"/>-->
-        <!--</action>-->
+        <action id="MethodGener.TestPsi" class="me.xiba.plugin.TestPsiAction"
+                text="TestPsi" description="TestPsi">
+            <add-to-group group-id="GenerateGroup" anchor="last"/>
+        </action>
     </actions>
 
 </idea-plugin>
