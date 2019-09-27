@@ -1,31 +1,25 @@
 package me.xiba.plugin;
 
-import com.intellij.lang.ASTNode;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.PlatformDataKeys;
-import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
-import com.intellij.openapi.fileChooser.FileChooser;
-import com.intellij.openapi.fileChooser.FileChooserDescriptor;
-import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.ui.Messages;
-import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.PsiElementFactoryImpl;
 import com.intellij.psi.impl.PsiManagerEx;
-import com.intellij.psi.impl.source.tree.LeafElement;
-import com.intellij.psi.impl.source.tree.PlainTextASTFactory;
-import com.intellij.psi.impl.source.tree.PsiWhiteSpaceImpl;
-import com.intellij.psi.javadoc.PsiDocComment;
+import com.intellij.psi.impl.source.PsiJavaFileImpl;
+import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.search.PsiShortNamesCache;
 import me.xiba.plugin.template.ModelTemplate;
 import me.xiba.plugin.utils.ClassSelector;
+import me.xiba.plugin.utils.PsiCreator;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -49,36 +43,143 @@ public class SesameAction extends AnAction {
     public static final String KEY_METHOD_PARAMS_WITHOUT_TYPE = "method_params_without_type";
 
     String name;
-
     Map<String, Object> sourceMethod;
+    PsiCreator psiCreator;
+    Project project;
 
     @Override
     public void actionPerformed(AnActionEvent e) {
-        Project project = e.getProject();
+        project = e.getProject();
+
+        // 当前光标所在的PsiFile
+        PsiFile file = e.getData(PlatformDataKeys.PSI_FILE);
+
+        // 当前光标所在的PsiElement
+        PsiElement psiElement = e.getData(PlatformDataKeys.PSI_ELEMENT);
+
         // 获取当前的文件
-        VirtualFile file = e.getData(PlatformDataKeys.VIRTUAL_FILE);
+        VirtualFile virtualFile = e.getData(PlatformDataKeys.VIRTUAL_FILE);
 
-        // 获取当前文件的目录
-        VirtualFile parentDir = file.getParent().getParent();
-
+        PsiElementFactoryImpl mPsiElementFactoryImpl = new PsiElementFactoryImpl(PsiManagerEx.getInstanceEx(project));
+        psiCreator = new PsiCreator(project, mPsiElementFactoryImpl);
         name = file.getName().replace("Service.java", "");
 
-        // 生成Model文件内容
-        generateModelFile(file, parentDir, e);
 
-        getViewModelFile(project, file);
+        // 1. 解析当前光标所在的方法
+        sourceMethod = parseCurrenMethod(psiElement);
+        if (sourceMethod == null){
 
+            return ;
+        }
+
+        // 2. 生成Model文件
+        generateModelFile(project, e);
+
+        // 3. 显示选择面板
+        getViewModelFile(virtualFile);
 
     }
 
     /**
+     * 解析当前光标所在的方法
+     */
+    private Map<String, Object> parseCurrenMethod(PsiElement psiElement){
+
+
+        if (psiElement instanceof PsiMethod){
+            Map<String, Object> paramMap = new HashMap<>();
+            PsiMethod currentMethod = (PsiMethod) psiElement;
+
+
+            // 添加方法名
+            paramMap.put(KEY_METHOD_NAME, currentMethod.getName());
+
+            System.out.println("currentMethod.getName()=" + currentMethod.getName());
+
+            // 添加注释
+            PsiElement[] tags = currentMethod.getDocComment().getDescriptionElements();
+
+            for (int i = 0; i < tags.length; i++) {
+                System.out.println("tags[" + i + "].getText()=" + tags[i].getText());
+                if (tags[i].getText() != null && !tags[i].getText().trim().equals("")){
+                    // 添加注释
+                    paramMap.put(KEY_METHOD_COMMENT_DATA, tags[i].getText().trim());
+                    break;
+                }
+            }
+
+            // 获取返回值
+            PsiType returnType = currentMethod.getReturnType();
+            String methodStr = returnType.toString();
+
+            String returnStartStr = "BaseHttpResult<";
+            int indexStartReturn = methodStr.indexOf(returnStartStr);
+            int indexEndReturn = methodStr.lastIndexOf(">");
+
+            String returnStr = methodStr.substring(indexStartReturn + returnStartStr.length(), indexEndReturn - 1);
+
+            System.out.println("returnStr=" + returnStr);
+            // 添加返回值
+            paramMap.put(KEY_METHOD_RETURN, returnStr);
+
+
+            PsiParameterList psiParameterList = currentMethod.getParameterList();
+
+            StringBuilder params = new StringBuilder();
+            StringBuilder paramsWithoutType = new StringBuilder();
+
+            List<Pair> paramList = new ArrayList<Pair>();
+            if(psiParameterList.getParametersCount() > 0){
+                for (int i = 0; i < psiParameterList.getParametersCount(); i++) {
+                    PsiParameter parameter = psiParameterList.getParameters()[i];
+
+                    // 参数名做为key，因为参数名不重复
+                    // 参数值做为value
+                    Pair keyValue = new Pair(parameter.getName(), parameter.getTypeElement().getFirstChild().getText());
+
+                    paramList.add(keyValue);
+
+                    params.append(parameter.getTypeElement().getFirstChild().getText());
+                    params.append(" ");
+                    params.append(parameter.getName());
+
+
+                    paramsWithoutType.append(parameter.getName());
+                    if(i != psiParameterList.getParametersCount() - 1){
+                        params.append(", ");
+                        paramsWithoutType.append(", ");
+                    }
+
+                    System.out.println(i + ": parameter.getName()=" + parameter.getName());
+                    System.out.println(i + ": parameter.getType().toString()=" + parameter.getTypeElement().getFirstChild().getText());
+
+                }
+            }
+
+            // 添加方法参数字符串
+            paramMap.put(KEY_METHOD_PARAMS_WITH_TYPE, params.toString());
+            paramMap.put(KEY_METHOD_PARAMS_WITHOUT_TYPE, paramsWithoutType.toString());
+            // 添加方法参数
+            paramMap.put(KEY_METHOD_PARAMS, paramList);
+
+            return paramMap;
+
+        }
+
+        return null;
+    }
+
+    /**
      * 生成Model文件内容
-     * @param file
-     * @param parentDir
      * @param e
      */
-    public void generateModelFile(VirtualFile file, VirtualFile parentDir, AnActionEvent e){
+    public void generateModelFile(Project project,  AnActionEvent e){
         try {
+            // 获取当前的文件
+            VirtualFile file = e.getData(PlatformDataKeys.VIRTUAL_FILE);
+            // 获取当前文件的目录
+            VirtualFile parentDir = file.getParent().getParent();
+
             //创建「model」文件夹
             VirtualFile modelDir = parentDir.findChild("model");
             if (modelDir == null){
@@ -94,27 +195,44 @@ public class SesameAction extends AnAction {
 
             String modelContent;
 
-            // 解析接口方法
-            sourceMethod = parseMethod(getSourceText(e));
-            if(modelFile.exists()) {
-                // 如果文件存在 向文件添加方法
-                modelContent = generatorModelMethod(sourceMethod) + "\n}";
+            // 创建Model文件并生成内容
+            if(!modelFile.exists()) {
 
-            } else {
                 // 如果ModelXxx.java文件
                 if(modelDir != null && modelDir.exists()) {
                     // 如果路径不存在，先创建路径
                     modelDir.findOrCreateChildData(file.getUserData(VirtualFile.REQUESTOR_MARKER), modelFileName);
                 }
-                // 创建Model文件并生成内容
+
                 String packagePath = getPackagePath(e);
-                modelContent = generateModelFile(packagePath, name, generatorModelMethod(sourceMethod));
+                modelContent = generateModelFile(packagePath, name, generatorModelMethod());
 
+                writeFile(modelFile.getPath(), modelContent);
+
+            } else {    // 已经有Model文件，添加相关方法
+
+                VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByIoFile(modelFile);
+                PsiFile viewModelPsiFile = PsiManager.getInstance(project).findFile(virtualFile);
+
+                PsiJavaFileImpl psiJavaFile = (PsiJavaFileImpl) viewModelPsiFile;
+
+                PsiElement lastChild = viewModelPsiFile.getLastChild();
+
+                PsiElement[] children = viewModelPsiFile.getChildren();
+
+                for (int i = 0; i < children.length; i++) {
+                    int index = children.length - 1 - i;
+                    if (children[index] instanceof PsiWhiteSpace){
+                        continue;
+                    }
+                    lastChild = children[index];
+                    break;
+                }
+                PsiElement initObservableMethodElement = psiCreator.createMethod(generatorModelMethod(), lastChild, null);
+
+                // 生成返回类型import代码
+                generateReturnAndParamImport((PsiJavaFileImpl) viewModelPsiFile);
             }
-
-            writeFile(modelFile.getPath(), modelContent);
-
-
 
 
         } catch (IOException e1) {
@@ -122,369 +240,32 @@ public class SesameAction extends AnAction {
         }
     }
 
-
     /**
-     * 找到目标文本
-     * @param e
-     * @return
+     * 生成Model方法的字符串
      */
-    private String getSourceText(AnActionEvent e){
-        Editor editor = e.getRequiredData(CommonDataKeys.EDITOR);
-        int line = editor.getCaretModel().getLogicalPosition().line;
+    public String generatorModelMethod(){
 
-        Document document = editor.getDocument();
-        int startLine = getStartLine(document, line);
-        int endLine = getEndLine(document, line);
+        String methodName = (String) sourceMethod.get(KEY_METHOD_NAME);
 
-        if (startLine == -1 || endLine == -1){
-            throw new IllegalArgumentException("未能找到可转化的目标文本");
+        String commentData = (String) sourceMethod.get(KEY_METHOD_COMMENT_DATA);
+
+        String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
+
+        String paramsWithoutType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITHOUT_TYPE);
+
+        String paramsWithType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITH_TYPE);
+
+        if (paramsWithType != null && !paramsWithType.equals("")){
+            paramsWithType = paramsWithType + ", ";
         }
 
+        // 1 方法名  %1$s
+        // 2 带类型的参数  %2$s
+        // 3 注释  %3$s
+        // 4 返回值  %4$s
+        // 5 不带类型的参数  %5$s
+        return String.format(MODEL_METHOD_TMPLATE, methodName, paramsWithType, commentData, returnType, paramsWithoutType);
 
-        String sourceText = getRangeText(document, startLine, endLine);
-
-        return sourceText;
-    }
-
-
-    /**
-     * 找到 当前行向上10行，'@'开头的行数
-     * @param document
-     * @param currentLin
-     * @return
-     */
-    private int getStartLine(Document document, int currentLin){
-        int startLine = -1;
-
-        for (int i = 0; i < 10; i++) {
-            if (currentLin - i >= 0){
-
-                String lineText = getSelectedText(document, currentLin - i).trim();
-
-                if (lineText.startsWith("@GET") || lineText.startsWith("@POST")
-                        || lineText.startsWith("@PUT") || lineText.startsWith("@DELETE")){
-                    startLine = currentLin - i;
-                    break;
-                }
-            }
-
-        }
-
-        return startLine;
-    }
-
-    /**
-     * 找到 当前行向下10行，包含';'的行数
-     * @param document
-     * @param currentLin
-     * @return
-     */
-    private int getEndLine(Document document, int currentLin){
-        int endLine = -1;
-
-        for (int i = 0; i < 10; i++) {
-
-            String lineText = getSelectedText(document, currentLin + i);
-
-            if (lineText.contains(";")){
-                endLine = currentLin + i;
-                break;
-            }
-
-        }
-
-        return endLine;
-    }
-
-    /**
-     * 根据行数，获取当前行的文本
-     * @param document
-     * @param line
-     * @return
-     */
-    private String getSelectedText(Document document, int line){
-
-        int lineStart = document.getLineStartOffset(line);
-        int lineEnd = document.getLineEndOffset(line);
-
-        return document.getText(new TextRange(lineStart, lineEnd));
-    }
-
-    /**
-     * 获取两个行数之间的文本
-     * @param document
-     * @param startLine
-     * @param endLine
-     * @return
-     */
-    private String getRangeText(Document document, int startLine, int endLine){
-
-        int lineStart = document.getLineStartOffset(startLine);
-        int lineEnd = document.getLineEndOffset(endLine);
-
-        return document.getText(new TextRange(lineStart, lineEnd));
-    }
-
-    /**
-     * 解析接口方法
-     * @param methodStr
-     */
-    private Map<String, Object> parseMethod(String methodStr){
-        if (methodStr == null || methodStr.toString().equals("")){
-            return null;
-        }
-
-        Map<String, Object> paramMap = new HashMap<>();
-
-        StringBuilder sb = new StringBuilder();
-
-
-        // 获取返回值
-        String returnStartStr = "BaseHttpResult<";
-        int indexStartReturn = methodStr.indexOf(returnStartStr);
-        int indexEndReturn = methodStr.indexOf("> ");
-
-        String returnStr = methodStr.substring(indexStartReturn + returnStartStr.length(), indexEndReturn - 1);
-        // 添加返回值
-        paramMap.put(KEY_METHOD_RETURN, returnStr);
-
-        sb.append("returnStr = " + returnStr);
-        sb.append("\n");
-
-        // 获取方法名
-        String methodNameAndParam = methodStr.substring(indexEndReturn + 1);
-        int methodNameEndIndex = methodNameAndParam.indexOf("(");
-
-        String methodNameStr = methodNameAndParam.trim().substring(0, methodNameEndIndex - 1);
-        // 添加方法名
-        paramMap.put(KEY_METHOD_NAME, methodNameStr);
-
-        sb.append("methodNameStr = " + methodNameStr);
-        sb.append("\n");
-
-        // 获取方法参数
-        int methodParamEndIndex = methodNameAndParam.indexOf(");");
-        String methodParamStr = methodNameAndParam.trim().substring(methodNameEndIndex, methodParamEndIndex - 1);
-
-        String[] methodParams = methodParamStr.split(",");
-
-        List<Pair> paramList = new ArrayList<Pair>();
-        if(methodParams.length > 0){
-            for (int i = 0; i < methodParams.length; i++) {
-                String[] paramCons = methodParams[i].trim().split(" ");
-
-                if (paramCons.length > 1){
-                    Pair keyValue = new Pair(paramCons[2], paramCons[1]);
-
-//                    DefaultKeyValue keyValue = new DefaultKeyValue();
-                    // 参数名做为key，因为参数名不重复
-//                    keyValue.setKey(paramCons[2]);
-                    // 参数值做为value
-//                    keyValue.setValue(paramCons[1]);
-
-                    paramList.add(keyValue);
-                }
-
-            }
-        }
-
-        // 添加方法参数
-        paramMap.put(KEY_METHOD_PARAMS, paramList);
-
-        return paramMap;
-    }
-
-    /**
-     * 生成Model中的对应方法
-     * @param paramMap
-     * @return
-     */
-    public String generatorModelMethod(Map<String, Object> paramMap){
-        if (paramMap == null) {
-            return "";
-        }
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("\n");
-        sb.append("\tpublic void ");
-        sb.append(paramMap.get(KEY_METHOD_NAME));
-        sb.append("(");
-
-
-        List<Pair> paramList = (List<Pair>) paramMap.get(KEY_METHOD_PARAMS);
-
-        StringBuilder params = new StringBuilder();
-        if (paramList.size() > 0){
-            Pair defaultKeyValue;
-            for (int i = 0; i < paramList.size(); i++) {
-                defaultKeyValue = paramList.get(i);
-                sb.append(defaultKeyValue.getSecond());
-                sb.append(" ");
-                sb.append(defaultKeyValue.getFirst());
-                sb.append(", ");
-
-                params.append(defaultKeyValue.getFirst());
-                if(i != paramList.size() - 1){
-                    params.append(", ");
-                }
-            }
-        }
-
-        sb.append(String.format("LoadingObserver<%s> loadingObserver", paramMap.get(KEY_METHOD_RETURN)));
-        sb.append(") {\n");
-
-        String methodBody = String.format("\t\tObservable observable = getService().%1$s(%2$s);\n", paramMap.get(KEY_METHOD_NAME), params.toString());
-        sb.append(methodBody);
-        sb.append("\t\tmakeSubscribe(observable, loadingObserver);\n");
-        sb.append("\t}");
-        sb.append("\n");
-
-        return sb.toString();
-    }
-
-    /**
-     * 生成ViewModel相关的方法
-     * @param methodName 方法名
-     * @param returnType 返回值
-     * @param paramsWithType 带类型的参数
-     * @param params 参数
-     * @return
-     */
-    public void generateViewModelMethod(Project project, PsiFile viewModelPsiFile, String methodName, String returnType, String paramsWithType, String params){
-
-//        String firstLetterUpper = methodName.substring(0,1).toUpperCase().concat(methodName.substring(1));
-
-//        String modelFile = String.format(ViewModelMethodTomplate.METHOD_TEMPLATE, methodName, firstLetterUpper, returnType, paramsWithType, params);
-        PsiElement lastChild = viewModelPsiFile.getLastChild();
-
-        PsiElement[] children = viewModelPsiFile.getChildren();
-
-        for (int i = 0; i < children.length; i++) {
-            int index = children.length - 1 - i;
-            if (children[index] instanceof PsiWhiteSpace){
-                continue;
-            }
-            lastChild = children[index];
-            break;
-        }
-
-        PsiElementFactoryImpl mPsiElementFactoryImpl = new PsiElementFactoryImpl(PsiManagerEx.getInstanceEx(project));
-
-
-
-        //生成第一个注释
-        String firstCommentText = "// ——————————————————————— ↓↓↓↓ <editor-fold desc=\" method\"> ↓↓↓↓ ——————————————————————— //";
-        PsiElement firstCommentElement = createComment(project, mPsiElementFactoryImpl, firstCommentText, lastChild, null);
-
-        // 生成observable变量
-        String observableFileText = "private LoadingObserver<%1$s> %2$sObserver;";
-        observableFileText = String.format(observableFileText, returnType, methodName);
-        PsiElement observableFiledElement = createField(project, mPsiElementFactoryImpl, observableFileText, lastChild, firstCommentElement);
-
-
-//        PsiElement whiteSpace = createWhiteSpace(project, mPsiElementFactoryImpl, "", lastChild, observableFiledElement);
-
-
-        // 生成initObservable的方法
-        String firstLetterUpper = methodName.substring(0,1).toUpperCase().concat(methodName.substring(1));
-        String initObservableMethodText = String.format(INIT_OBSERVER_METHOD_TEMPLATE, methodName, firstLetterUpper, returnType);
-        PsiElement initObservableMethodElement = createMethod(project, mPsiElementFactoryImpl, initObservableMethodText, lastChild, observableFiledElement);
-
-        // 生成SuccessEvent变量
-        String successEventFiledText = String.format(SUCCESS_EVENT_FIELD_TEMPLATE, methodName, returnType);
-        PsiElement successEventFiledElement = createField(project, mPsiElementFactoryImpl, successEventFiledText, lastChild, initObservableMethodElement);
-
-        // 生成getSuccessEvent方法模板
-        String getSuccessEventMethodText = String.format(GET_SUCCESS_EVENT_METHOD_TEMPLATE, methodName, firstLetterUpper, returnType);
-        PsiElement getSuccessEventMethodElement = createMethod(project, mPsiElementFactoryImpl, getSuccessEventMethodText, lastChild, successEventFiledElement);
-
-        // 生成调用model方法模板
-        String modelMethodText = String.format(MODEL_METHOD_TEMPLATE, methodName, paramsWithType, params);
-        PsiElement modelMethodElement = createMethod(project, mPsiElementFactoryImpl, modelMethodText, lastChild, getSuccessEventMethodElement);
-
-
-
-        // 生成结束注释
-//        PsiElement endEditorFoldCommentElement = createComment(project, mPsiElementFactoryImpl, END_EDITOR_FOLD_COMMENT_TEMPLATE, lastChild, modelMethodElement);
-//        return modelFile;
-    }
-
-    /**
-     * 生成model文件内容
-     * @param packagePath
-     * @param name
-     * @param method
-     */
-    public String generateModelFile(String packagePath, String name, String method){
-
-        String modelFile = String.format(ModelTemplate.MODEL_TEMPLATE, packagePath, name, method);
-
-        return modelFile;
-
-    }
-
-    /**
-     * 生成带参数类型的 参数字符串
-     * @param paramList
-     * @return
-     */
-    private String generateParamWithType(List<Pair> paramList){
-        StringBuilder sb = new StringBuilder();
-
-
-        if (paramList.size() > 0){
-            Pair defaultKeyValue;
-            for (int i = 0; i < paramList.size(); i++) {
-                defaultKeyValue = paramList.get(i);
-                sb.append(defaultKeyValue.getSecond());
-                sb.append(" ");
-                sb.append(defaultKeyValue.getFirst());
-
-                if(i != paramList.size() - 1){
-                    sb.append(", ");
-                }
-            }
-        }
-        return sb.toString();
-    }
-
-    /**
-     * 生成参数字符串
-     * @param paramList
-     * @return
-     */
-    private String generateParam(List<Pair> paramList){
-        StringBuilder params = new StringBuilder();
-
-
-        if (paramList.size() > 0){
-            Pair defaultKeyValue;
-            for (int i = 0; i < paramList.size(); i++) {
-                defaultKeyValue = paramList.get(i);
-                params.append(defaultKeyValue.getFirst());
-                if(i != paramList.size() - 1){
-                    params.append(", ");
-                }
-            }
-        }
-        return params.toString();
-    }
-
-    /**
-     * 获取service文件的包路径
-     * @param e
-     * @return
-     */
-    private String getPackagePath(AnActionEvent e){
-        Editor editor = e.getRequiredData(CommonDataKeys.EDITOR);
-
-        Document document = editor.getDocument();
-        String firstLineText = getSelectedText(document, 0);
-
-        String startText = "package ";
-        int startIndex = firstLineText.indexOf(startText);
-        int endIndex = firstLineText.indexOf(".service;");
-        return firstLineText.substring(startIndex + startText.length(), endIndex);
     }
 
     private void writeFile(String file, String content) throws IOException {
@@ -506,213 +287,100 @@ public class SesameAction extends AnAction {
     }
 
     /**
-     * 单选文件
-     *
-     * @param project
-     * @param virtualFile
+     * 生成model文件内容
+     * @param packagePath
+     * @param name
+     * @param method
      */
-    private VirtualFile selectSingleVirtualFile(Project project, VirtualFile virtualFile) {
-        FileChooserDescriptor fileChooserDescriptor = FileChooserDescriptorFactory.createSingleFileDescriptor(); // Single
-        fileChooserDescriptor.setForcedToUseIdeaFileChooser(true);
-        // 选择的文件
-        VirtualFile selectedFile = FileChooser.chooseFile(fileChooserDescriptor, project, virtualFile); // Single
+    public String generateModelFile(String packagePath, String name, String method){
 
-        return selectedFile;
-//        Messages.showMessageDialog(project, selectedFile.getPath(), "Greeting", Messages.getInformationIcon());
+        String modelFile = String.format(ModelTemplate.MODEL_TEMPLATE, packagePath, name, method);
+
+        return modelFile;
+
     }
 
     /**
-     * 多选文件
-     *
-     * @param project
-     * @param virtualFile
-     */
-    private void selectMultiVirtualFiles(Project project, VirtualFile virtualFile) {
-        FileChooserDescriptor multipleFilesNoJarsDescriptor = FileChooserDescriptorFactory.createMultipleFilesNoJarsDescriptor(); // Multi
-        multipleFilesNoJarsDescriptor.setForcedToUseIdeaFileChooser(true);
-        VirtualFile[] selectedFiles = FileChooser.chooseFiles(multipleFilesNoJarsDescriptor, project, virtualFile); // Multi
-        Messages.showMessageDialog(project, selectedFiles.length + "", "Greeting", Messages.getInformationIcon());
-    }
-
-    /**
-     * 创建一个变量
-     * @param project
-     * @param psiElementFactoryImpl
-     * @param text
-     * @param context
+     * 获取service文件的包路径
+     * @param e
      * @return
      */
-    public PsiElement createField(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
-        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
-            @Override
-            public PsiElement compute() {
-                PsiField psiField = psiElementFactoryImpl.createFieldFromText(text, context);
+    private String getPackagePath(AnActionEvent e){
+        Editor editor = e.getRequiredData(CommonDataKeys.EDITOR);
 
-                if (anchor != null){
-                    return context.addAfter(psiField, anchor);
-                } else {
-                    return context.add(psiField);
+        Document document = editor.getDocument();
+        String firstLineText = getSelectedText(document, 0);
+
+        String startText = "package ";
+        int startIndex = firstLineText.indexOf(startText);
+        int endIndex = firstLineText.indexOf(".service;");
+        return firstLineText.substring(startIndex + startText.length(), endIndex);
+    }
+
+    /**
+     * 根据行数，获取当前行的文本
+     * @param document
+     * @param line
+     * @return
+     */
+    private String getSelectedText(Document document, int line){
+
+        int lineStart = document.getLineStartOffset(line);
+        int lineEnd = document.getLineEndOffset(line);
+
+        return document.getText(new TextRange(lineStart, lineEnd));
+    }
+
+    /**
+     * 生成import代码
+     * @param className
+     * @param psiJavaFile
+     */
+    public void generateImport(String className, PsiJavaFileImpl psiJavaFile){
+        GlobalSearchScope searchScope = GlobalSearchScope.allScope(project);
+
+        PsiClass[] psiClasses = PsiShortNamesCache.getInstance(project).getClassesByName(className, searchScope);
+
+        if (psiClasses.length > 0){
+
+            psiCreator.createImport(psiClasses[0], psiJavaFile);
+
+        }
+    }
+
+    public void generateReturnAndParamImport(PsiJavaFileImpl psiJavaFile){
+        String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
+
+        generateImport(returnType, psiJavaFile);
+
+        List<Pair> paramList = (List<Pair>) sourceMethod.get(KEY_METHOD_PARAMS);
+
+
+        if (paramList.size() > 0){
+            Pair defaultKeyValue;
+            for (int i = 0; i < paramList.size(); i++) {
+                defaultKeyValue = paramList.get(i);
+
+                String paramsType = (String) defaultKeyValue.getSecond();
+
+                boolean isLower = paramsType.charAt(0) >= 97 && paramsType.charAt(0) <= 122;
+
+                if (paramsType != null
+                        && !isLower
+                        && !paramsType.equals("String")){
+                    generateImport(paramsType, psiJavaFile);
                 }
 
             }
-        });
+        }
     }
-
-    /**
-     * 创建一个方法
-     * @param project
-     * @param psiElementFactoryImpl
-     * @param text
-     * @param context
-     * @return
-     */
-    public PsiElement createMethod(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
-        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
-            @Override
-            public PsiElement compute() {
-                PsiMethod psiMethod = psiElementFactoryImpl.createMethodFromText(text, context);
-                if (anchor != null){
-                    return context.addAfter(psiMethod, anchor);
-                } else {
-                    return context.add(psiMethod);
-                }
-            }
-        });
-    }
-
-    /**
-     * 创建一个注释
-     * @param project
-     * @param psiElementFactoryImpl
-     * @param text
-     * @param context
-     * @return
-     */
-    public PsiElement createComment(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
-
-
-        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
-            @Override
-            public PsiElement compute() {
-//                PsiComment comment = psiElementFactoryImpl.createCommentFromText(text, context);
-                PsiDocComment comment = psiElementFactoryImpl.createDocCommentFromText("/**\n" +
-                        " *\n" +
-                        " */");
-
-                if (anchor != null){
-                    return context.addAfter(comment, anchor);
-                } else {
-                    return context.add(comment);
-                }
-            }
-        });
-    }
-
-    public PsiElement createWhiteSpace(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
-        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
-            @Override
-            public PsiElement compute() {
-                PsiWhiteSpaceImpl psiWhiteSpace = new PsiWhiteSpaceImpl("/n");
-
-                if (anchor != null){
-                    return context.addAfter(psiWhiteSpace, anchor);
-                } else {
-                    return context.add(psiWhiteSpace);
-                }
-            }
-        });
-    }
-
-    public PsiElement createTextCommen(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context, PsiElement anchor){
-        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
-            @Override
-            public PsiElement compute() {
-                PlainTextASTFactory factory = new PlainTextASTFactory();
-                LeafElement leafElement = factory.createLeaf(PlainTextTokenTypes.PLAIN_TEXT, text + "\n");
-                ASTNode node = context.getNode();
-
-                ASTNode[] children = node.getChildren(null);
-
-
-
-                node.addChild(leafElement, children[children.length - 2]);
-
-//                PsiPlainTextImpl psiComment = new PsiPlainTextImpl(text);
-//                DummyHolderFactory.createHolder(PsiManagerEx.getInstanceEx(project), (TreeElement) SourceTreeToPsiMap.psiElementToTree(psiComment), context);
-//                PsiElement comment = psiElementFactoryImpl.createCommentFromText(text, null);
-
-
-//                if (anchor != null){
-//                    return context.addBefore(psiComment, anchor);
-//                } else {
-//                    return context.add(psiComment);
-//                }
-                return null;
-            }
-        });
-    }
-//    createDocTagFromText
-
-    /**
-     * 创建一个注释
-     * @param project
-     * @param psiElementFactoryImpl
-     * @param text
-     * @param context
-     * @return
-     */
-    public PsiElement createComment(Project project, PsiElementFactoryImpl psiElementFactoryImpl, String text, PsiElement context){
-        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
-            @Override
-            public PsiElement compute() {
-                PsiComment comment = psiElementFactoryImpl.createCommentFromText(text, context);
-                return context.add(comment);
-            }
-        });
-    }
-
-    /**
-     * 删除一个元素
-     * @param project
-     * @param context
-     * @return
-     */
-    public PsiElement deletePsiElement(Project project, PsiElement context){
-
-
-        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
-            @Override
-            public PsiElement compute() {
-                context.delete();
-                return null;
-            }
-        });
-    }
-
-    /**
-     * 添加一个元素
-     * @param project
-     * @param context
-     * @return
-     */
-    public PsiElement addPsiElement(Project project, PsiElement context, PsiElement element){
-
-
-        return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
-            @Override
-            public PsiElement compute() {
-                return context.add(element);
-            }
-        });
-    }
-
 
     /**
      * 获取ViewModel文件夹下的所有文件
      *
      * @param virtualFile
      */
-    private void getViewModelFile(Project project, VirtualFile virtualFile) {
+    private void getViewModelFile(VirtualFile virtualFile) {
         VirtualFile parentDir = virtualFile.getParent().getParent();
         VirtualFile vmDir = parentDir.findChild("viewmodel");
         VirtualFile[] vmFiles;
@@ -745,27 +413,96 @@ public class SesameAction extends AnAction {
      */
     private void onViewModelFileSelected(Project project, List<VirtualFile> resultFileList) {
 
-        String methodName = (String) sourceMethod.get(KEY_METHOD_NAME);
-        String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
-        List<Pair> paramList = (List<Pair>) sourceMethod.get(KEY_METHOD_PARAMS);
-
         for (VirtualFile viewModelFile : resultFileList) {
             // 找到ViewModel对应的PsiFile
             PsiFile viewModelPsiFile = PsiManager.getInstance(project).findFile(viewModelFile);
             // 向ViewModel中插入相关的方法
-            generateViewModelMethod(project, viewModelPsiFile, methodName, returnType, generateParamWithType(paramList), generateParam(paramList));
+            generateVMCode(viewModelPsiFile);
         }
 
     }
 
+    /**
+     * 生成VM相关代码
+     * @param viewModelPsiFile
+     */
+    public void generateVMCode(PsiFile viewModelPsiFile){
+        PsiElement lastChild = viewModelPsiFile.getLastChild();
+
+        PsiElement[] children = viewModelPsiFile.getChildren();
+
+        for (int i = 0; i < children.length; i++) {
+            int index = children.length - 1 - i;
+            if (children[index] instanceof PsiWhiteSpace){
+                continue;
+            }
+            lastChild = children[index];
+            break;
+        }
+
+        String methodName = (String) sourceMethod.get(KEY_METHOD_NAME);
+
+        String commentData = (String) sourceMethod.get(KEY_METHOD_COMMENT_DATA);
+
+        String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
+
+        String paramsWithoutType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITHOUT_TYPE);
+
+        String paramsWithType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITH_TYPE);
 
 
+        // step 1 创建一个变量
+        String observableFileText = "private LoadingObserver<%1$s> %2$sObserver;";
+        observableFileText = String.format(observableFileText, returnType, methodName);
+        PsiElement field = psiCreator.createField(observableFileText, lastChild, lastChild);
 
+        // step 2 创建变量的注释
+        String commentText = "/**\n" + " * 「%1$s」\n" + "*/";
+        commentText = String.format(commentText, commentData);
+        PsiElement comment = psiCreator.createCommentDocToMethod(commentText, field);
 
+        // step 3 创建代码块起始注释
+        String codeStartComment = "// ——————————————————————— ↓↓↓↓ <editor-fold desc=\"「%1$s」 method\"> ↓↓↓↓ ——————————————————————— //";
+        codeStartComment = String.format(codeStartComment, commentData);
+        PsiElement codeStartCommentPsi = psiCreator.createComment(codeStartComment, lastChild, field, true);
 
+        // step 4 生成initObservable的方法
+        String firstLetterUpper = methodName.substring(0,1).toUpperCase().concat(methodName.substring(1));
+        String initObservableMethodText = String.format(INIT_OBSERVER_METHOD_TEMPLATE, methodName, firstLetterUpper, returnType);
+        PsiElement initObservableMethodElement = psiCreator.createMethod(initObservableMethodText, lastChild, field);
+
+        // step 5 创建方法的注释
+        String commentInitMethodText = "/**\n" + " * 初始化「%1$s」\n" + "*/";
+        commentInitMethodText = String.format(commentInitMethodText, commentData);
+        PsiElement commentInitMethod = psiCreator.createCommentDocToMethod(commentInitMethodText, initObservableMethodElement);
+
+        // step 6 生成SuccessEvent变量
+        String successEventFiledText = String.format(SUCCESS_EVENT_FIELD_TEMPLATE, methodName, returnType);
+        PsiElement successEventFiledElement = psiCreator.createFieldAfter(successEventFiledText, lastChild, initObservableMethodElement);
+
+        // step 7 创建方法的注释
+        String commentSuccessEventText = "/**\n" + " *「%1$s」成功\n" + "*/";
+        commentSuccessEventText = String.format(commentSuccessEventText, commentData);
+        PsiElement commentSuccessEvent = psiCreator.createCommentDocToMethod(commentSuccessEventText, successEventFiledElement);
+
+        // step 8 生成调用model方法模板
+        String modelMethodText = String.format(MODEL_METHOD_TEMPLATE, methodName, paramsWithType, paramsWithoutType);
+        PsiElement modelMethodElement = psiCreator.createMethod(modelMethodText, lastChild, successEventFiledElement);
+
+        // step 9 创建方法的注释
+        String commentModelMethodText = "/**\n" + " * 调用「%1$s」接口\n" + "*/";
+        commentModelMethodText = String.format(commentModelMethodText, commentData);
+        PsiElement commentModelMethod = psiCreator.createCommentDocToMethod(commentModelMethodText, modelMethodElement);
+
+        // step 10 创建代码块终止注释
+        PsiElement codeEndCommentPsi = psiCreator.createComment(END_EDITOR_FOLD_COMMENT_TEMPLATE, lastChild, modelMethodElement, false);
+
+        // 生成返回类型import代码
+        generateReturnAndParamImport((PsiJavaFileImpl) viewModelPsiFile);
+
+    }
 
 }
-
 
 
 
