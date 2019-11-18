@@ -26,6 +26,7 @@ public class PsiClassUtil {
                 return ((PsiPackageStatementImpl) element).getPackageName();
             }
         }
+
         return "";
     }
 

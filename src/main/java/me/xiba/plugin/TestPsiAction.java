@@ -13,6 +13,7 @@ import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.wm.impl.Windows;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.PsiElementFactoryImpl;
 import com.intellij.psi.impl.PsiManagerEx;
@@ -23,7 +24,13 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.PsiShortNamesCache;
 import me.xiba.plugin.template.ModelTemplate;
 import me.xiba.plugin.utils.ClassSelector;
+import me.xiba.plugin.utils.KtPsiCreator;
+import me.xiba.plugin.utils.MethodPaser;
 import me.xiba.plugin.utils.PsiCreator;
+import org.jetbrains.kotlin.idea.kdoc.KDocElementFactory;
+import org.jetbrains.kotlin.psi.KtFile;
+import org.jetbrains.kotlin.psi.KtPsiFactory;
+import org.jetbrains.kotlin.psi2ir.generators.FunctionGenerator;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -45,6 +52,7 @@ public class TestPsiAction extends AnAction {
     String name;
     Map<String, Object> sourceMethod;
     PsiCreator psiCreator;
+    KtPsiCreator ktPsiCreator;
     Project project;
 
     @Override
@@ -64,19 +72,26 @@ public class TestPsiAction extends AnAction {
         psiCreator = new PsiCreator(project, mPsiElementFactoryImpl);
         name = file.getName().replace("Service.java", "");
 
+        System.out.println("file.getName()=" + file.getName());
+        System.out.println("virtualFile.getCanonicalPath()=" + virtualFile.getCanonicalPath());
 
-        // 1. 解析当前光标所在的方法
-        sourceMethod = parseCurrenMethod(psiElement);
-        if (sourceMethod == null){
+        KtPsiFactory mKtPsiFactory = new KtPsiFactory(project);
+        ktPsiCreator = new KtPsiCreator(project, mKtPsiFactory);
 
-            return ;
-        }
+        MethodPaser.parseKtCurrenMethod(psiElement);
 
-        // 2. 生成Model文件
-        generateModelFile(project, e);
-
-        // 3. 显示选择面板
-        getViewModelFile(virtualFile);
+//        // 1. 解析当前光标所在的方法
+//        sourceMethod = parseCurrenMethod(psiElement);
+//        if (sourceMethod == null){
+//
+//            return ;
+//        }
+//
+//        // 2. 生成Model文件
+//        generateModelFile(project, e);
+//
+//        // 3. 显示选择面板
+//        getViewModelFile(virtualFile);
 
     }
 
@@ -85,11 +100,9 @@ public class TestPsiAction extends AnAction {
      */
     private Map<String, Object> parseCurrenMethod(PsiElement psiElement){
 
-
         if (psiElement instanceof PsiMethod){
             Map<String, Object> paramMap = new HashMap<>();
             PsiMethod currentMethod = (PsiMethod) psiElement;
-
 
             // 添加方法名
             paramMap.put(KEY_METHOD_NAME, currentMethod.getName());
