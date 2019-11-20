@@ -143,12 +143,27 @@ public class PsiCreator {
      * @return
      */
     public PsiElement createMethod(String text, PsiElement context, PsiElement anchor){
+        return createMethod(text, context, anchor, false);
+    }
+
+    /**
+     * 创建一个方法
+     * @param text
+     * @param context
+     * @return
+     */
+    public PsiElement createMethod(String text, PsiElement context, PsiElement anchor, boolean isBefore){
         return WriteCommandAction.runWriteCommandAction(project, new Computable<PsiElement>() {
             @Override
             public PsiElement compute() {
                 PsiMethod psiMethod = psiElementFactoryImpl.createMethodFromText(text, context);
                 if (anchor != null){
-                    return context.addAfter(psiMethod, anchor);
+                    if (isBefore) {
+                        return context.addBefore(psiMethod, anchor);
+                    } else {
+                        return context.addAfter(psiMethod, anchor);
+                    }
+
                 } else {
                     return context.add(psiMethod);
                 }

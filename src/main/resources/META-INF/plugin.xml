@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>me.xiba.plugin.SesamePlugin</id>
     <name>SesamePlugin</name>
-    <version>1.0.0</version>
+    <version>2.0.0</version>
     <vendor email="tough1985@gmail.com" url="https://github.com/tough1985/SesamePlugin">Xiba</vendor>
 
 
@@ -31,10 +31,10 @@
                 text="SesameGenerate" description="Generate Retrofit Service method in Model class And ViewModel class">
             <add-to-group group-id="GenerateGroup" anchor="last"/>
         </action>
-        <action id="MethodGener.TestPsi" class="me.xiba.plugin.TestPsiAction"
-                text="TestPsi" description="TestPsi">
-            <add-to-group group-id="GenerateGroup" anchor="last"/>
-        </action>
+        <!--<action id="MethodGener.TestPsi" class="me.xiba.plugin.TestPsiAction"-->
+                <!--text="TestPsi" description="TestPsi">-->
+            <!--<add-to-group group-id="GenerateGroup" anchor="last"/>-->
+        <!--</action>-->
     </actions>
 
 </idea-plugin>

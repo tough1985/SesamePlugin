@@ -102,4 +102,56 @@ public class ViewModelMethodTomplate {
             "       .compose(transResult(observer))\n" +
             "       .subscribe(observer);\n" +
             "}";
+
+    // 调用model方法模板
+    // 1 方法名  %1$s
+    // 2 带类型的参数  %2$s
+    // 3 注释  %3$s
+    // 4 返回值  %4$s
+    // 5 不带类型的参数  %5$s
+    public static String MODEL_METHOD_KT_TMPLATE =
+            "/**\n" +
+            " %3$s\n" +
+            " */\n" +
+            "fun %1$s(%2$s, observer: LoadingObserver<%4$s>) {\n" +
+            "   getService()?.%1$s(%5$s)\n" +
+            "       ?.compose(transResult(observer))\n" +
+            "       ?.subscribe(observer)\n" +
+            "}";
+
+    // 1 方法名 %1$s -> RecommendationList
+    // 2 返回值 %2$s -> List<String>
+    // 3 注释内容 %3$s
+    // 4 带类型参数 %4$s
+    // 5 不带类型参数 %5$s
+    public static String KT_VIEW_MODEL_TEMPLATE =
+            "// ——————————————————————— ↓↓↓↓ <editor-fold desc=\"%3$s method\"> ↓↓↓↓ ——————————————————————— //\n" +
+            "\n" +
+            "    // 「%3$s」 LoadingObserver\n" +
+            "    private var %1$sObserver: LoadingObserver<%2$s>? = null\n" +
+            "\n" +
+            "    // 「%3$s」 成功Event\n" +
+            "    val %1$sSuccessEvent = SingleLiveEvent<%2$s>()\n" +
+            "\n" +
+            "    val %1$sFailEvent = SingleLiveEvent<ApiExceptrion>()\n" +
+            "\n" +
+            "    private fun %1$sObserver(): LoadingObserver<%2$s> {\n" +
+            "        %1$sObserver?.let {\n" +
+            "            return it\n" +
+            "        } ?: run {\n" +
+            "\n" +
+            "            %1$sObserver = getLoadingObserver({\n" +
+            "                %1$sSuccessEvent.value = it\n" +
+            "            }, mShowLoading, %1$sFailEvent)\n" +
+            "            return %1$sObserver!!\n" +
+            "        }\n" +
+            "    }\n" +
+            "\n" +
+            "    /**\n" +
+            "     * 「%3$s」\n" +
+            "     */\n" +
+            "    fun %1$s(%4$s) {\n" +
+            "        mModel.%1$s(%5$sobserver = %1$sObserver())\n" +
+            "    }\n" +
+            "    // ——————————————————————— ↑↑↑↑ </editor-fold> ↑↑↑↑ ——————————————————————— //";
 }

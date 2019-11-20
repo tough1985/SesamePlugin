@@ -68,7 +68,9 @@ public class MethodPaser {
             int paramCount = currentMethod.getValueParameters().size();
 
             StringBuilder params = new StringBuilder();
+            StringBuilder ktParams = new StringBuilder();
             StringBuilder paramsWithoutType = new StringBuilder();
+            StringBuilder ktParamsWithoutType = new StringBuilder();
 
             List<Pair> paramList = new ArrayList<Pair>();
 
@@ -91,11 +93,20 @@ public class MethodPaser {
                     params.append(" ");
                     params.append(parameter.getName());
 
+                    ktParams.append(parameter.getName());
+                    ktParams.append(": ");
+                    ktParams.append(paramType);
+
+                    ktParamsWithoutType.append(parameter.getName());
+                    ktParamsWithoutType.append(" = ");
+                    ktParamsWithoutType.append(parameter.getName());
 
                     paramsWithoutType.append(parameter.getName());
                     if(i != paramCount - 1){
                         params.append(", ");
+                        ktParams.append(", ");
                         paramsWithoutType.append(", ");
+                        ktParamsWithoutType.append(", ");
                     }
 
                     System.out.println(i + ": parameter.getName()=" + parameter.getName());
@@ -106,10 +117,13 @@ public class MethodPaser {
 
             // 添加方法参数字符串
             paramMap.put(KEY_METHOD_PARAMS_WITH_TYPE, params.toString());
+            paramMap.put(KEY_METHOD_PARAMS_WITH_TYPE_KT, ktParams.toString());
             paramMap.put(KEY_METHOD_PARAMS_WITHOUT_TYPE, paramsWithoutType.toString());
+            paramMap.put(KEY_METHOD_PARAMS_WITHOUT_TYPE_KT, ktParamsWithoutType.toString());
             // 添加方法参数
             paramMap.put(KEY_METHOD_PARAMS, paramList);
 
+            return paramMap;
         }
 
         return null;
@@ -118,7 +132,7 @@ public class MethodPaser {
     /**
      * 解析当前光标所在的方法
      */
-    private Map<String, Object> parseCurrenMethod(PsiElement psiElement){
+    public static Map<String, Object> parseCurrenMethod(PsiElement psiElement){
 
         if (psiElement instanceof PsiMethod){
             Map<String, Object> paramMap = new HashMap<>();
@@ -159,6 +173,7 @@ public class MethodPaser {
             PsiParameterList psiParameterList = currentMethod.getParameterList();
 
             StringBuilder params = new StringBuilder();
+            StringBuilder ktParams = new StringBuilder();
             StringBuilder paramsWithoutType = new StringBuilder();
 
             List<Pair> paramList = new ArrayList<Pair>();
@@ -176,10 +191,14 @@ public class MethodPaser {
                     params.append(" ");
                     params.append(parameter.getName());
 
+                    ktParams.append(parameter.getName());
+                    ktParams.append(": ");
+                    ktParams.append(parameter.getTypeElement().getFirstChild().getText());
 
                     paramsWithoutType.append(parameter.getName());
                     if(i != psiParameterList.getParametersCount() - 1){
                         params.append(", ");
+                        ktParams.append(", ");
                         paramsWithoutType.append(", ");
                     }
 
@@ -191,6 +210,7 @@ public class MethodPaser {
 
             // 添加方法参数字符串
             paramMap.put(KEY_METHOD_PARAMS_WITH_TYPE, params.toString());
+            paramMap.put(KEY_METHOD_PARAMS_WITH_TYPE_KT, ktParams.toString());
             paramMap.put(KEY_METHOD_PARAMS_WITHOUT_TYPE, paramsWithoutType.toString());
             // 添加方法参数
             paramMap.put(KEY_METHOD_PARAMS, paramList);

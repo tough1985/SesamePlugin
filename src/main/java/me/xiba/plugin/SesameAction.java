@@ -19,7 +19,12 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.PsiShortNamesCache;
 import me.xiba.plugin.template.ModelTemplate;
 import me.xiba.plugin.utils.ClassSelector;
+import me.xiba.plugin.utils.KtPsiCreator;
+import me.xiba.plugin.utils.MethodPaser;
 import me.xiba.plugin.utils.PsiCreator;
+import org.jetbrains.kotlin.psi.KtClass;
+import org.jetbrains.kotlin.psi.KtFile;
+import org.jetbrains.kotlin.psi.KtPsiFactory;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -40,11 +45,15 @@ public class SesameAction extends AnAction {
     public static final String KEY_METHOD_COMMENT_DATA = "method_comment_data";
 
     public static final String KEY_METHOD_PARAMS_WITH_TYPE = "method_params_with_type";
+    public static final String KEY_METHOD_PARAMS_WITH_TYPE_KT = "method_params_with_type_kt";
     public static final String KEY_METHOD_PARAMS_WITHOUT_TYPE = "method_params_without_type";
+    public static final String KEY_METHOD_PARAMS_WITHOUT_TYPE_KT = "key_method_params_without_type_kt";
+
 
     String name;
     Map<String, Object> sourceMethod;
     PsiCreator psiCreator;
+    KtPsiCreator ktPsiCreator;
     Project project;
 
     @Override
@@ -64,12 +73,21 @@ public class SesameAction extends AnAction {
         psiCreator = new PsiCreator(project, mPsiElementFactoryImpl);
         name = file.getName().replace("Service.java", "");
 
+        System.out.println("file.getName()=" + file.getName());
+        System.out.println("virtualFile.getCanonicalPath()=" + virtualFile.getCanonicalPath());
+
+        KtPsiFactory mKtPsiFactory = new KtPsiFactory(project);
+        ktPsiCreator = new KtPsiCreator(project, mKtPsiFactory);
 
         // 1. 解析当前光标所在的方法
-        sourceMethod = parseCurrenMethod(psiElement);
-        if (sourceMethod == null){
+        if (file.getName().endsWith(".kt")){
+            sourceMethod = MethodPaser.parseKtCurrenMethod(psiElement);
+        } else {
+            sourceMethod = MethodPaser.parseCurrenMethod(psiElement);
+        }
 
-            return ;
+        if (sourceMethod == null){
+            return;
         }
 
         // 2. 生成Model文件
@@ -80,94 +98,6 @@ public class SesameAction extends AnAction {
 
     }
 
-    /**
-     * 解析当前光标所在的方法
-     */
-    private Map<String, Object> parseCurrenMethod(PsiElement psiElement){
-
-
-        if (psiElement instanceof PsiMethod){
-            Map<String, Object> paramMap = new HashMap<>();
-            PsiMethod currentMethod = (PsiMethod) psiElement;
-
-
-            // 添加方法名
-            paramMap.put(KEY_METHOD_NAME, currentMethod.getName());
-
-            System.out.println("currentMethod.getName()=" + currentMethod.getName());
-
-            // 添加注释
-            PsiElement[] tags = currentMethod.getDocComment().getDescriptionElements();
-
-            for (int i = 0; i < tags.length; i++) {
-                System.out.println("tags[" + i + "].getText()=" + tags[i].getText());
-                if (tags[i].getText() != null && !tags[i].getText().trim().equals("")){
-                    // 添加注释
-                    paramMap.put(KEY_METHOD_COMMENT_DATA, tags[i].getText().trim());
-                    break;
-                }
-            }
-
-            // 获取返回值
-            PsiType returnType = currentMethod.getReturnType();
-            String methodStr = returnType.toString();
-
-            String returnStartStr = "BaseHttpResult<";
-            int indexStartReturn = methodStr.indexOf(returnStartStr);
-            int indexEndReturn = methodStr.lastIndexOf(">");
-
-            String returnStr = methodStr.substring(indexStartReturn + returnStartStr.length(), indexEndReturn - 1);
-
-            System.out.println("returnStr=" + returnStr);
-            // 添加返回值
-            paramMap.put(KEY_METHOD_RETURN, returnStr);
-
-
-            PsiParameterList psiParameterList = currentMethod.getParameterList();
-
-            StringBuilder params = new StringBuilder();
-            StringBuilder paramsWithoutType = new StringBuilder();
-
-            List<Pair> paramList = new ArrayList<Pair>();
-            if(psiParameterList.getParametersCount() > 0){
-                for (int i = 0; i < psiParameterList.getParametersCount(); i++) {
-                    PsiParameter parameter = psiParameterList.getParameters()[i];
-
-                    // 参数名做为key，因为参数名不重复
-                    // 参数值做为value
-                    Pair keyValue = new Pair(parameter.getName(), parameter.getTypeElement().getFirstChild().getText());
-
-                    paramList.add(keyValue);
-
-                    params.append(parameter.getTypeElement().getFirstChild().getText());
-                    params.append(" ");
-                    params.append(parameter.getName());
-
-
-                    paramsWithoutType.append(parameter.getName());
-                    if(i != psiParameterList.getParametersCount() - 1){
-                        params.append(", ");
-                        paramsWithoutType.append(", ");
-                    }
-
-                    System.out.println(i + ": parameter.getName()=" + parameter.getName());
-                    System.out.println(i + ": parameter.getType().toString()=" + parameter.getTypeElement().getFirstChild().getText());
-
-                }
-            }
-
-            // 添加方法参数字符串
-            paramMap.put(KEY_METHOD_PARAMS_WITH_TYPE, params.toString());
-            paramMap.put(KEY_METHOD_PARAMS_WITHOUT_TYPE, paramsWithoutType.toString());
-            // 添加方法参数
-            paramMap.put(KEY_METHOD_PARAMS, paramList);
-
-            return paramMap;
-
-        }
-
-        return null;
-    }
 
     /**
      * 生成Model文件内容
@@ -194,18 +124,20 @@ public class SesameAction extends AnAction {
             File modelFile = new File(modelFileFullName);
 
             String modelContent;
+            boolean isServiceKt = name.endsWith(".kt");
 
             // 创建Model文件并生成内容
             if(!modelFile.exists()) {
 
                 // 如果ModelXxx.java文件
-                if(modelDir != null && modelDir.exists()) {
+                if(modelDir != null && !modelDir.exists()) {
                     // 如果路径不存在，先创建路径
                     modelDir.findOrCreateChildData(file.getUserData(VirtualFile.REQUESTOR_MARKER), modelFileName);
                 }
 
-                String packagePath = getPackagePath(e);
-                modelContent = generateModelFile(packagePath, name, generatorModelMethod());
+                String packagePath = getPackagePath(e, isServiceKt);
+
+                modelContent = generateModelFile(packagePath, name, generatorModelMethod(isServiceKt));
 
                 writeFile(modelFile.getPath(), modelContent);
 
@@ -213,8 +145,6 @@ public class SesameAction extends AnAction {
 
                 VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByIoFile(modelFile);
                 PsiFile viewModelPsiFile = PsiManager.getInstance(project).findFile(virtualFile);
-
-                PsiJavaFileImpl psiJavaFile = (PsiJavaFileImpl) viewModelPsiFile;
 
                 PsiElement lastChild = viewModelPsiFile.getLastChild();
 
@@ -228,10 +158,28 @@ public class SesameAction extends AnAction {
                     lastChild = children[index];
                     break;
                 }
-                PsiElement initObservableMethodElement = psiCreator.createMethod(generatorModelMethod(), lastChild, null);
 
-                // 生成返回类型import代码
-                generateReturnAndParamImport((PsiJavaFileImpl) viewModelPsiFile);
+                if (isServiceKt) {
+                    ktPsiCreator.createMethod(generatorModelMethod(isServiceKt),
+                            (KtClass)lastChild,
+                            lastChild.getLastChild().getLastChild(),
+                            true);
+                } else {
+                    psiCreator.createMethod(
+                            generatorModelMethod(isServiceKt),
+                            lastChild,
+                            lastChild.getLastChild().getLastChild(),
+                            true);
+                }
+
+                if(isServiceKt) {
+                    // 生成返回类型import代码
+                    generateReturnAndParamImport((KtFile) viewModelPsiFile);
+                } else {
+                    // 生成返回类型import代码
+                    generateReturnAndParamImport((PsiJavaFileImpl) viewModelPsiFile);
+                }
+
             }
 
 
@@ -243,7 +191,7 @@ public class SesameAction extends AnAction {
     /**
      * 生成Model方法的字符串
      */
-    public String generatorModelMethod(){
+    public String generatorModelMethod(boolean isModelKt){
 
         String methodName = (String) sourceMethod.get(KEY_METHOD_NAME);
 
@@ -253,18 +201,17 @@ public class SesameAction extends AnAction {
 
         String paramsWithoutType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITHOUT_TYPE);
 
-        String paramsWithType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITH_TYPE);
+        String paramsWithType = isModelKt ? (String) sourceMethod.get(KEY_METHOD_PARAMS_WITH_TYPE_KT) : (String) sourceMethod.get(KEY_METHOD_PARAMS_WITH_TYPE);
 
-        if (paramsWithType != null && !paramsWithType.equals("")){
-            paramsWithType = paramsWithType + ", ";
-        }
+        String modelTemplate = isModelKt ? MODEL_METHOD_KT_TMPLATE : MODEL_METHOD_TMPLATE;
+//
 
         // 1 方法名  %1$s
         // 2 带类型的参数  %2$s
         // 3 注释  %3$s
         // 4 返回值  %4$s
         // 5 不带类型的参数  %5$s
-        return String.format(MODEL_METHOD_TMPLATE, methodName, paramsWithType, commentData, returnType, paramsWithoutType);
+        return String.format(modelTemplate, methodName, paramsWithType, commentData, returnType, paramsWithoutType);
 
     }
 
@@ -294,7 +241,21 @@ public class SesameAction extends AnAction {
      */
     public String generateModelFile(String packagePath, String name, String method){
 
-        String modelFile = String.format(ModelTemplate.MODEL_TEMPLATE, packagePath, name, method);
+        // 判断service文件是不是kotlin
+        boolean isServiceKt = name.endsWith(".kt");
+
+        String modelName;
+
+        if (isServiceKt){
+            modelName = name.replace("Service.kt", "");
+        } else {
+            modelName = name.replace("Service.java", "");
+        }
+
+        // 如果Service是kotlin文件，生成的model也是kotlin
+        String template = isServiceKt? ModelTemplate.KT_MODEL_TEMPLATE : ModelTemplate.MODEL_TEMPLATE;
+
+        String modelFile = String.format(template, packagePath, modelName, method);
 
         return modelFile;
 
@@ -305,7 +266,7 @@ public class SesameAction extends AnAction {
      * @param e
      * @return
      */
-    private String getPackagePath(AnActionEvent e){
+    private String getPackagePath(AnActionEvent e, boolean isKt){
         Editor editor = e.getRequiredData(CommonDataKeys.EDITOR);
 
         Document document = editor.getDocument();
@@ -313,7 +274,13 @@ public class SesameAction extends AnAction {
 
         String startText = "package ";
         int startIndex = firstLineText.indexOf(startText);
-        int endIndex = firstLineText.indexOf(".service;");
+        int endIndex;
+        if(isKt){
+            endIndex = firstLineText.indexOf(".service");
+        } else{
+            endIndex = firstLineText.indexOf(".service;");
+        }
+
         return firstLineText.substring(startIndex + startText.length(), endIndex);
     }
 
@@ -348,13 +315,30 @@ public class SesameAction extends AnAction {
         }
     }
 
+    /**
+     * 生成import代码
+     * @param className
+     * @param psiJavaFile
+     */
+    public void generateImport(String className, KtFile psiJavaFile){
+        GlobalSearchScope searchScope = GlobalSearchScope.allScope(project);
+
+
+        PsiClass[] psiClasses = PsiShortNamesCache.getInstance(project).getClassesByName(className, searchScope);
+
+        if (psiClasses.length > 0){
+
+            ktPsiCreator.createImport(psiClasses[0].getQualifiedName(), psiJavaFile);
+
+        }
+    }
+
     public void generateReturnAndParamImport(PsiJavaFileImpl psiJavaFile){
         String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
 
         generateImport(returnType, psiJavaFile);
 
         List<Pair> paramList = (List<Pair>) sourceMethod.get(KEY_METHOD_PARAMS);
-
 
         if (paramList.size() > 0){
             Pair defaultKeyValue;
@@ -368,6 +352,40 @@ public class SesameAction extends AnAction {
                 if (paramsType != null
                         && !isLower
                         && !paramsType.equals("String")){
+                    generateImport(paramsType, psiJavaFile);
+                }
+
+            }
+        }
+    }
+
+    public void generateReturnAndParamImport(KtFile psiJavaFile){
+        String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
+
+        generateImport(returnType, psiJavaFile);
+
+        List<Pair> paramList = (List<Pair>) sourceMethod.get(KEY_METHOD_PARAMS);
+
+        if (paramList.size() > 0){
+            Pair defaultKeyValue;
+            for (int i = 0; i < paramList.size(); i++) {
+                defaultKeyValue = paramList.get(i);
+
+                String paramsType = (String) defaultKeyValue.getSecond();
+
+                boolean isLower = paramsType.charAt(0) >= 97 && paramsType.charAt(0) <= 122;
+
+                if (paramsType != null
+                        && !isLower
+                        && !paramsType.equals("String")
+                        && !paramsType.equals("Double")
+                        && !paramsType.equals("Long")
+                        && !paramsType.equals("Int")
+                        && !paramsType.equals("Short")
+                        && !paramsType.equals("Boolean")
+                        && !paramsType.equals("Float")
+                        && !paramsType.equals("Byte")
+                        && !paramsType.equals("Char")){
                     generateImport(paramsType, psiJavaFile);
                 }
 
@@ -414,10 +432,20 @@ public class SesameAction extends AnAction {
     private void onViewModelFileSelected(Project project, List<VirtualFile> resultFileList) {
 
         for (VirtualFile viewModelFile : resultFileList) {
+
+            // 判断选中文件是不是kotlin
+            boolean isKt = viewModelFile.getName().endsWith(".kt");
+
             // 找到ViewModel对应的PsiFile
             PsiFile viewModelPsiFile = PsiManager.getInstance(project).findFile(viewModelFile);
+
             // 向ViewModel中插入相关的方法
-            generateVMCode(viewModelPsiFile);
+            if (isKt){
+                generateKtVMCode(viewModelPsiFile);
+            } else {
+                generateVMCode(viewModelPsiFile);
+            }
+
         }
 
     }
@@ -449,7 +477,6 @@ public class SesameAction extends AnAction {
         String paramsWithoutType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITHOUT_TYPE);
 
         String paramsWithType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITH_TYPE);
-
 
         // step 1 创建一个变量
         String observableFileText = "private LoadingObserver<%1$s> %2$sObserver;";
@@ -502,6 +529,60 @@ public class SesameAction extends AnAction {
 
     }
 
+
+    /**
+     * 生成VM相关代码
+     * @param viewModelPsiFile
+     */
+    public void generateKtVMCode(PsiFile viewModelPsiFile){
+        PsiElement lastChild = viewModelPsiFile.getLastChild();
+
+        PsiElement[] children = viewModelPsiFile.getChildren();
+
+        for (int i = 0; i < children.length; i++) {
+            int index = children.length - 1 - i;
+            if (children[index] instanceof PsiWhiteSpace){
+                continue;
+            }
+            lastChild = children[index];
+            break;
+        }
+
+        String methodName = (String) sourceMethod.get(KEY_METHOD_NAME);
+
+        String commentData = (String) sourceMethod.get(KEY_METHOD_COMMENT_DATA);
+
+        String returnType = (String) sourceMethod.get(KEY_METHOD_RETURN);
+
+        String paramsWithoutType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITHOUT_TYPE_KT);
+
+        String paramsWithTypeKt = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITH_TYPE_KT);
+
+        String paramsWithType = (String) sourceMethod.get(KEY_METHOD_PARAMS_WITH_TYPE);
+
+        if (!paramsWithoutType.trim().equals("")){
+            paramsWithoutType = paramsWithoutType + ", ";
+        }
+
+        if (commentData.contains("*")){
+            int startIndex = commentData.indexOf("*") + 1;
+            int endIndex = commentData.indexOf("\n");
+            if (endIndex == -1){
+                endIndex = commentData.length();
+            }
+            if (startIndex < endIndex){
+                commentData = commentData.substring(startIndex, endIndex).trim();
+            }
+        }
+
+        // step 1 创建一个LoadingObserver变量
+        String observableFileText;
+        observableFileText = String.format(KT_VIEW_MODEL_TEMPLATE, methodName, returnType, commentData, paramsWithTypeKt, paramsWithoutType);
+        PsiElement field = ktPsiCreator.createField(observableFileText, lastChild, lastChild.getLastChild());
+
+        // 生成返回类型import代码
+        generateReturnAndParamImport((KtFile) viewModelPsiFile);
+    }
 }
 
 
